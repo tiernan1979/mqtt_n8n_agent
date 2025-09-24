@@ -1,7 +1,7 @@
 {
   "domain": "mqtt_n8n_agent",
   "name": "MQTT N8N Conversation Agent",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "documentation": "https://github.com/tiernan1979/mqtt_n8n_agent/",
   "requirements": [
     "asyncio-mqtt>=0.12.0", 
