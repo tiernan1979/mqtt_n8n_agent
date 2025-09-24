@@ -149,7 +149,13 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     "instructions",
                     default="You are a voice assistant for Home Assistant.",
-                ): str,
+                ): selector.selector({
+                    "text": {
+                        "multiline": True,
+                        "min_length": 0,
+                        "max_length": 10000,
+                    }
+                }),
                 vol.Required(CONF_CONTEXT_WINDOW, default=defaults[CONF_CONTEXT_WINDOW]): int,
                 vol.Required(CONF_MAX_HISTORY, default=defaults[CONF_MAX_HISTORY]): int,
                 vol.Required(CONF_KEEP_ALIVE, default=defaults[CONF_KEEP_ALIVE]): int,
