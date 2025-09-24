@@ -3,16 +3,15 @@ import json
 import logging
 from typing import Optional
 
-from homeassistant import core
+from homeassistant.core import HomeAssistant
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.typing import HomeAssistantType
 
 from .const import (
     CONF_N8N_HOST, CONF_N8N_PORT,
     CONF_WEBHOOK_LIST_MODELS, CONF_WEBHOOK_CHAT, CONF_WEBHOOK_STREAM,
     CONF_MQTT_HOST, CONF_MQTT_PORT, CONF_MQTT_USERNAME, CONF_MQTT_PASSWORD, CONF_MQTT_TLS,
-    CONF_CONTEXT_WINDOW, CONF_MAX_HISTORY, CONF_KEEP_ALIVE, CONF_SHOW_THINKING
+    CONF_CONTEXT_WINDOW, CONF_MAX_HISTORY, CONF_KEEP_ALIVE, CONF_SHOW_THINKING,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,7 +24,7 @@ except ImportError:
 
 
 async def async_setup_agent(
-    hass: HomeAssistantType, entry: ConfigEntry, agent_id: str
+    hass: HomeAssistant, entry: ConfigEntry, agent_id: str
 ) -> conversation.ConversationAgent:
     """Set up the conversation agent instance."""
     config = entry.data
@@ -46,7 +45,7 @@ async def async_setup_agent(
         max_history=config.get(CONF_MAX_HISTORY),
         keep_alive=config.get(CONF_KEEP_ALIVE),
         show_thinking=config.get(CONF_SHOW_THINKING),
-        model=config.get("model")  # new
+        model=config.get("model")  # new optional model param
     )
 
 
@@ -55,7 +54,7 @@ class MqttN8nAgent(conversation.ConversationAgent):
 
     def __init__(
         self,
-        hass: HomeAssistantType,
+        hass: HomeAssistant,
         agent_id: str,
         n8n_host: str,
         n8n_port: int,
@@ -93,76 +92,67 @@ class MqttN8nAgent(conversation.ConversationAgent):
 
         self.conversation_histories: dict[str, list[str]] = {}
 
-async def async_process(self, request: conversation.ConversationInput) -> ConversationResult:
-    if MQTTClient is None:
-        _LOGGER.error("asyncio_mqtt library not installed")
-        return ConversationResult(
-            response=TextSpeech(type=SpeechType.PLAIN, speech="Sorry, I cannot respond right now."),
-            conversation_id=request.conversation_id,
-        )
+    async def async_process(self, request: conversation.ConversationRequest) -> conversation.BotResponse:
+        if MQTTClient is None:
+            _LOGGER.error("asyncio_mqtt library not installed")
+            return conversation.BotResponse(text="Sorry, I cannot respond right now.", data={})
 
-    conversation_id = request.conversation_id
-    user_text = request.text
+        conversation_id = request.conversation_id
+        user_text = request.text
 
-    history = self.conversation_histories.get(conversation_id, [])
-    history.append(user_text)
-    if len(history) > self.max_history:
-        history = history[-self.max_history:]
-    self.conversation_histories[conversation_id] = history
+        history = self.conversation_histories.get(conversation_id, [])
+        history.append(user_text)
+        if len(history) > self.max_history:
+            history = history[-self.max_history :]
+        self.conversation_histories[conversation_id] = history
 
-    input_topic = f"n8n/voice/input/{conversation_id}"
-    output_topic = f"n8n/voice/output/{conversation_id}"
+        input_topic = f"n8n/voice/input/{conversation_id}"
+        output_topic = f"n8n/voice/output/{conversation_id}"
 
-    payload = {
-        "text": user_text,
-        "conversation_id": conversation_id,
-        "history": history,
-        "context_window": self.context_window,
-    }
-    if self.model:
-        payload["model"] = self.model
+        payload = {
+            "text": user_text,
+            "conversation_id": conversation_id,
+            "history": history,
+            "context_window": self.context_window,
+        }
+        if self.model:
+            payload["model"] = self.model
 
-    full_response = ""
-    queue: asyncio.Queue[str] = asyncio.Queue()
+        full_response = ""
+        queue: asyncio.Queue[str] = asyncio.Queue()
 
-    async def mqtt_message_handler(msg):
-        try:
-            tok = msg.payload.decode()
-        except Exception:
-            return
-        await queue.put(tok)
-
-    try:
-        async with MQTTClient(
-            hostname=self.mqtt_host,
-            port=self.mqtt_port,
-            username=self.mqtt_username,
-            password=self.mqtt_password,
-            tls_context=None if not self.mqtt_tls else True,
-        ) as client:
-            await client.subscribe(output_topic)
-            client.on_message = mqtt_message_handler
-
-            await client.publish(input_topic, json.dumps(payload))
-
+        async def mqtt_message_handler(msg):
             try:
-                while True:
-                    token = await asyncio.wait_for(queue.get(), timeout=self.keep_alive)
-                    if token == "[END]":
-                        break
-                    full_response += token
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Timeout waiting for response from n8n for conv %s", conversation_id)
+                tok = msg.payload.decode()
+            except Exception:
+                return
+            await queue.put(tok)
 
-            await client.unsubscribe(output_topic)
-    except MqttError as e:
-        _LOGGER.error("MQTT error: %s", e)
-        return ConversationResult(
-            response=TextSpeech(type=SpeechType.PLAIN, speech="Error communicating with assistant."),
-            conversation_id=request.conversation_id,
-        )
+        try:
+            async with MQTTClient(
+                hostname=self.mqtt_host,
+                port=self.mqtt_port,
+                username=self.mqtt_username,
+                password=self.mqtt_password,
+                tls_context=None if not self.mqtt_tls else True,
+            ) as client:
+                await client.subscribe(output_topic)
+                client.on_message = mqtt_message_handler
 
-    return ConversationResult(
-        response=TextSpeech(type=SpeechType.PLAIN, speech=full_response),
-        conversation_id=request.conversation_id,
-    )
+                await client.publish(input_topic, json.dumps(payload))
+
+                try:
+                    while True:
+                        token = await asyncio.wait_for(queue.get(), timeout=self.keep_alive)
+                        if token == "[END]":
+                            break
+                        full_response += token
+                except asyncio.TimeoutError:
+                    _LOGGER.warning("Timeout waiting for response from n8n for conv %s", conversation_id)
+
+                await client.unsubscribe(output_topic)
+        except MqttError as e:
+            _LOGGER.error("MQTT error: %s", e)
+            return conversation.BotResponse(text="Error communicating with assistant.", data={})
+
+        return conversation.BotResponse(text=full_response, data={})
