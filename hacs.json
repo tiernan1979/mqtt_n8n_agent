@@ -3,5 +3,5 @@
   "content_in_root": false,
   "domains": ["mqtt_n8n_agent"],
   "iot_class": "local_push",
-  "homeassistant": "2024.5.0"
+  "homeassistant": "0.0.1"
 }
