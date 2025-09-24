@@ -4,7 +4,6 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from aiomqtt import Client as MQTTClient, MqttError  # Make sure you installed aiomqtt
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,7 +15,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
 async def async_setup_entry(hass: HomeAssistant, entry):
     """Set up mqtt_n8n_agent from a config entry."""
-
+    from aiomqtt import Client as MQTTClient, MqttError
+    
     mqtt_host = entry.data.get("mqtt_host")
     mqtt_port = entry.data.get("mqtt_port", 1883)
     mqtt_user = entry.data.get("mqtt_username")
