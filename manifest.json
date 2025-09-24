@@ -1,0 +1,13 @@
+{
+  "domain": "mqtt_n8n_agent",
+  "name": "MQTT N8N Conversation Agent",
+  "version": "0.1.0",
+  "documentation": "https://github.com/tiernan1979/mqtt_n8n_agent/",
+  "requirements": [
+    "asyncio-mqtt>=0.12.0",   // or whichever MQTT library you prefer
+    "aiohttp"
+  ],
+  "dependencies": [],
+  "codeowners": ["tiernan1979"],
+  "iot_class": "local_polling"
+}
