@@ -13,7 +13,7 @@ This component enables HA to offload conversation processing to `n8n` (which in 
 - 🧠 Context and history tracking per conversation
 - 💬 Works with [Ollama](https://ollama.com/) via `n8n` HTTP/Webhook nodes
 - 🤖 Full integration with Home Assistant’s `conversation:` system
-- 🧩 Optional `webhook_list_models` endpoint for live model selection
+- 🧩 webhook_list_models endpoint for live model selection
 
 ---
 
@@ -33,4 +33,4 @@ This component enables HA to offload conversation processing to `n8n` (which in 
 
 ```bash
 cd config/custom_components
-git clone https://github.com/yourusername/mqtt_n8n_agent.git
+git clone https://github.com/tiernan1979/mqtt_n8n_agent.git
