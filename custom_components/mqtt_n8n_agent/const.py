@@ -12,6 +12,11 @@ CONF_MQTT_USERNAME = "mqtt_username"
 CONF_MQTT_PASSWORD = "mqtt_password"
 CONF_MQTT_TLS = "mqtt_tls"
 
+CONF_CONTEXT_WINDOW = "context_window"
+CONF_MAX_HISTORY = "max_history"
+CONF_KEEP_ALIVE = "keep_alive"
+CONF_SHOW_THINKING = "show_thinking"
+
 DEFAULT_N8N_PORT = 5678
 DEFAULT_MQTT_PORT = 1883
 DEFAULT_SHOW_THINKING = False
