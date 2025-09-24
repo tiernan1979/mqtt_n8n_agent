@@ -3,7 +3,7 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_VERIFY_SSL
 
 _LOGGER = logging.getLogger(__name__)
 
