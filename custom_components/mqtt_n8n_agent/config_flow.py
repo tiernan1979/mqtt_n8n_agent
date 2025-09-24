@@ -143,16 +143,23 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-    def _fetch_model_from_n8n_blocking(self, n8n_url: str, verify_ssl: bool = True) -> str:
-        import requests
-    
+    def _fetch_model_from_n8n_blocking(self, n8n_url: str) -> str:
+        """Blocking method to fetch model name from N8N."""
+        import requests  # safe in executor
         try:
-            resp = requests.get(f"{n8n_url.rstrip('/')}/api/tags", timeout=5, verify=verify_ssl)
+            resp = requests.get(f"{n8n_url.rstrip('/')}/api/tags", timeout=5)
             resp.raise_for_status()
             data = resp.json()
-            model = data.get("model")
+    
+            models = data.get("models", [])
+            if not models:
+                raise ValueError("No models found in response")
+    
+            # Pick the first model's 'model' field
+            model = models[0].get("model")
             if not model:
-                raise ValueError("No model found in response")
+                raise ValueError("No 'model' key in first model entry")
+    
             return model
         except Exception as e:
             raise e
