@@ -1,35 +1,34 @@
 import logging
 
+import aiohttp
+import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_N8N_HOST, CONF_N8N_PORT,
+    CONF_WEBHOOK_LIST_MODELS, CONF_WEBHOOK_CHAT, CONF_WEBHOOK_STREAM,
+    CONF_MQTT_HOST, CONF_MQTT_PORT, CONF_MQTT_USERNAME, CONF_MQTT_PASSWORD, CONF_MQTT_TLS,
+    CONF_CONTEXT_WINDOW, CONF_MAX_HISTORY, CONF_KEEP_ALIVE,
+    CONF_SHOW_THINKING,
+    DEFAULT_MQTT_PORT, DEFAULT_N8N_PORT,
+    DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_HISTORY, DEFAULT_KEEP_ALIVE, DEFAULT_SHOW_THINKING,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for MQTT + n8n conversation agent."""
+    """Handle a config flow for MQTT + n8n agent."""
 
     VERSION = 1
     CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL
 
     async def async_step_user(self, user_input=None):
+        """Initial step showing the form."""
+
         if user_input is None:
-            # Lazy import heavy libs here to avoid blocking import warning
-            import voluptuous as vol
-            import aiohttp
-
-            from .const import (
-                CONF_N8N_HOST, CONF_N8N_PORT,
-                CONF_WEBHOOK_LIST_MODELS, CONF_WEBHOOK_CHAT, CONF_WEBHOOK_STREAM,
-                CONF_MQTT_HOST, CONF_MQTT_PORT, CONF_MQTT_USERNAME, CONF_MQTT_PASSWORD, CONF_MQTT_TLS,
-                CONF_CONTEXT_WINDOW, CONF_MAX_HISTORY, CONF_KEEP_ALIVE,
-                CONF_SHOW_THINKING,
-                DEFAULT_MQTT_PORT, DEFAULT_N8N_PORT,
-                DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_HISTORY, DEFAULT_KEEP_ALIVE, DEFAULT_SHOW_THINKING,
-            )
-
             schema = vol.Schema({
                 vol.Required(CONF_N8N_HOST): str,
                 vol.Optional(CONF_N8N_PORT, default=DEFAULT_N8N_PORT): int,
@@ -48,51 +47,51 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             })
             return self.async_show_form(step_id="user", data_schema=schema)
 
-        # If webhook_list_models provided, try to fetch models
         models = None
-        if user_input.get("webhook_list_models"):
-            import aiohttp
+        if user_input.get(CONF_WEBHOOK_LIST_MODELS):
             try:
-                url = user_input["webhook_list_models"]
+                url = user_input[CONF_WEBHOOK_LIST_MODELS]
                 async with aiohttp.ClientSession() as session:
                     resp = await session.get(url, timeout=10)
                     resp.raise_for_status()
                     data = await resp.json()
                 models = data.get("models", [])
                 if not isinstance(models, list):
-                    _LOGGER.warning("webhook_list_models did not return a list under 'models'")
+                    _LOGGER.warning("webhook_list_models did not return a list")
                     models = None
             except Exception as e:
-                _LOGGER.warning("Could not fetch models from webhook_list_models: %s", e)
+                _LOGGER.warning("Could not fetch models: %s", e)
                 models = None
 
         if models:
-            return await self.async_step_model(user_input, models)
+            self.context["user_input"] = user_input
+            return await self.async_step_model(models)
 
         return self.async_create_entry(
-            title=f"n8n @ {user_input['n8n_host']}",
+            title=f"n8n @ {user_input[CONF_N8N_HOST]}",
             data=user_input
         )
 
-    async def async_step_model(self, user_input, models):
-        import voluptuous as vol
-
-        context = self.context.setdefault("user_input", {})
-        context.update(user_input)
+    async def async_step_model(self, models):
+        """Step for user to pick a model."""
 
         schema = vol.Schema({
             vol.Required("model", default=models[0]): vol.In(models),
         })
+
         return self.async_show_form(
             step_id="model",
             data_schema=schema,
             description_placeholders={"models": ", ".join(models)},
         )
 
-    async def async_step_model_finish(self, user_input_model):
+    async def async_step_model_finish(self, user_input):
+        """Finish config with chosen model."""
+
         stored = self.context.get("user_input", {})
-        stored["model"] = user_input_model["model"]
+        stored["model"] = user_input["model"]
+
         return self.async_create_entry(
-            title=f"n8n @ {stored['n8n_host']} (model: {user_input_model['model']})",
-            data=stored,
+            title=f"n8n @ {stored[CONF_N8N_HOST]} (model: {user_input['model']})",
+            data=stored
         )
