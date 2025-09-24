@@ -1,97 +1,89 @@
 import logging
-
-import aiohttp
 import voluptuous as vol
-
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
-
+from homeassistant.core import callback
 from .const import (
     DOMAIN,
-    CONF_N8N_HOST, CONF_N8N_PORT,
-    CONF_WEBHOOK_LIST_MODELS, CONF_WEBHOOK_CHAT, CONF_WEBHOOK_STREAM,
-    CONF_MQTT_HOST, CONF_MQTT_PORT, CONF_MQTT_USERNAME, CONF_MQTT_PASSWORD, CONF_MQTT_TLS,
-    CONF_CONTEXT_WINDOW, CONF_MAX_HISTORY, CONF_KEEP_ALIVE,
+    CONF_CONTEXT_WINDOW,
+    CONF_MAX_HISTORY,
+    CONF_KEEP_ALIVE,
     CONF_SHOW_THINKING,
-    DEFAULT_MQTT_PORT, DEFAULT_N8N_PORT,
-    DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_HISTORY, DEFAULT_KEEP_ALIVE, DEFAULT_SHOW_THINKING,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for MQTT + n8n agent."""
+    """Handle a config flow for mqtt_n8n_agent."""
 
     VERSION = 1
-    CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL
 
     async def async_step_user(self, user_input=None):
-        """Initial step showing the form."""
+        """Handle the initial step of the config flow."""
+        errors = {}
 
-        if user_input is None:
-            schema = vol.Schema({
-                vol.Required(CONF_N8N_HOST): str,
-                vol.Optional(CONF_N8N_PORT, default=DEFAULT_N8N_PORT): int,
-                vol.Optional(CONF_WEBHOOK_LIST_MODELS, default=""): str,
-                vol.Required(CONF_WEBHOOK_CHAT): str,
-                vol.Optional(CONF_WEBHOOK_STREAM, default=""): str,
-                vol.Required(CONF_MQTT_HOST): str,
-                vol.Optional(CONF_MQTT_PORT, default=DEFAULT_MQTT_PORT): int,
-                vol.Optional(CONF_MQTT_USERNAME, default=""): str,
-                vol.Optional(CONF_MQTT_PASSWORD, default=""): str,
-                vol.Optional(CONF_MQTT_TLS, default=False): bool,
-                vol.Optional(CONF_CONTEXT_WINDOW, default=DEFAULT_CONTEXT_WINDOW): int,
-                vol.Optional(CONF_MAX_HISTORY, default=DEFAULT_MAX_HISTORY): int,
-                vol.Optional(CONF_KEEP_ALIVE, default=DEFAULT_KEEP_ALIVE): int,
-                vol.Optional(CONF_SHOW_THINKING, default=DEFAULT_SHOW_THINKING): bool,
-            })
-            return self.async_show_form(step_id="user", data_schema=schema)
-
-        models = None
-        if user_input.get(CONF_WEBHOOK_LIST_MODELS):
+        if user_input is not None:
+            # You can put validation logic here if needed
+            # e.g., test connection to MQTT broker or validate values
             try:
-                url = user_input[CONF_WEBHOOK_LIST_MODELS]
-                async with aiohttp.ClientSession() as session:
-                    resp = await session.get(url, timeout=10)
-                    resp.raise_for_status()
-                    data = await resp.json()
-                models = data.get("models", [])
-                if not isinstance(models, list):
-                    _LOGGER.warning("webhook_list_models did not return a list")
-                    models = None
-            except Exception as e:
-                _LOGGER.warning("Could not fetch models: %s", e)
-                models = None
+                # Example: Simple validation or call an async test function
+                # await self.hass.async_add_executor_job(your_sync_test_function, user_input)
 
-        if models:
-            self.context["user_input"] = user_input
-            return await self.async_step_model(models)
+                # If all good, create entry:
+                return self.async_create_entry(title="mqtt_n8n_agent", data=user_input)
+            except Exception as err:
+                _LOGGER.error("Error validating input: %s", err)
+                errors["base"] = "cannot_connect"
 
-        return self.async_create_entry(
-            title=f"n8n @ {user_input[CONF_N8N_HOST]}",
-            data=user_input
+        # Show form to the user
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CONTEXT_WINDOW, default=5): int,
+                    vol.Required(CONF_MAX_HISTORY, default=10): int,
+                    vol.Required(CONF_KEEP_ALIVE, default=True): bool,
+                    vol.Required(CONF_SHOW_THINKING, default=False): bool,
+                }
+            ),
+            errors=errors,
         )
 
-    async def async_step_model(self, models):
-        """Step for user to pick a model."""
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return MqttN8nAgentOptionsFlow(config_entry)
 
-        schema = vol.Schema({
-            vol.Required("model", default=models[0]): vol.In(models),
-        })
+
+class MqttN8nAgentOptionsFlow(config_entries.OptionsFlow):
+    """Handle options flow for mqtt_n8n_agent."""
+
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            # Optionally validate inputs here
+            try:
+                # If validation needed
+                return self.async_create_entry(title="", data=user_input)
+            except Exception as err:
+                _LOGGER.error("Error in options flow: %s", err)
+                errors["base"] = "invalid_options"
+
+        # Use current config values as defaults
+        data = self.config_entry.options or self.config_entry.data
 
         return self.async_show_form(
-            step_id="model",
-            data_schema=schema,
-            description_placeholders={"models": ", ".join(models)},
-        )
-
-    async def async_step_model_finish(self, user_input):
-        """Finish config with chosen model."""
-
-        stored = self.context.get("user_input", {})
-        stored["model"] = user_input["model"]
-
-        return self.async_create_entry(
-            title=f"n8n @ {stored[CONF_N8N_HOST]} (model: {user_input['model']})",
-            data=stored
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CONTEXT_WINDOW, default=data.get(CONF_CONTEXT_WINDOW, 5)): int,
+                    vol.Required(CONF_MAX_HISTORY, default=data.get(CONF_MAX_HISTORY, 10)): int,
+                    vol.Required(CONF_KEEP_ALIVE, default=data.get(CONF_KEEP_ALIVE, True)): bool,
+                    vol.Required(CONF_SHOW_THINKING, default=data.get(CONF_SHOW_THINKING, False)): bool,
+                }
+            ),
+            errors=errors,
         )
