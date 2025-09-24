@@ -5,6 +5,7 @@ CONF_N8N_PORT = "n8n_port"
 CONF_WEBHOOK_LIST_MODELS = "webhook_list_models"
 CONF_WEBHOOK_CHAT = "webhook_chat"
 CONF_WEBHOOK_STREAM = "webhook_stream"
+CONF_VERIFY_SSL = "verify_ssl"
 
 CONF_MQTT_HOST = "mqtt_host"
 CONF_MQTT_PORT = "mqtt_port"
