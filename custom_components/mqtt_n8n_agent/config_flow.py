@@ -35,15 +35,17 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._mqtt_host = None
         self._mqtt_username = None
         self._mqtt_password = None
+        self._verify_ssl = True
         self._model = None
 
     async def async_step_user(self, user_input=None):
         errors = {}
-    
+
         if user_input is not None:
             verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
-    
+
             try:
+                # Pass verify_ssl to _fetch_model_from_n8n_blocking correctly
                 model = await self.hass.async_add_executor_job(
                     self._fetch_model_from_n8n_blocking,
                     user_input[CONF_N8N_URL],
@@ -57,28 +59,28 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data_schema=self._get_user_data_schema(),
                     errors=errors,
                 )
-    
-            # ... mqtt connection check same as before
-    
+
+            # Here you might want to test MQTT connection as before,
+            # I assume you handle it elsewhere or similarly
+
             self._n8n_url = user_input[CONF_N8N_URL]
             self._mqtt_host = user_input[CONF_MQTT_HOST]
             self._mqtt_username = user_input.get(CONF_MQTT_USERNAME)
             self._mqtt_password = user_input.get(CONF_MQTT_PASSWORD)
-            self._verify_ssl = verify_ssl  # Save for later if needed
+            self._verify_ssl = verify_ssl
             self._model = model
-    
+
             return self.async_show_form(
                 step_id="options",
                 data_schema=self._get_options_data_schema(),
             )
-    
+
         return self.async_show_form(
             step_id="user",
             data_schema=self._get_user_data_schema(),
         )
 
     async def async_step_options(self, user_input=None):
-        """Step 2: Configure agent options."""
         errors = {}
 
         if user_input is not None:
@@ -86,13 +88,12 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["keep_alive"] = "invalid_keep_alive"
 
             if not errors:
-                # Create the config entry with all data
                 data = {
                     CONF_N8N_URL: self._n8n_url,
                     CONF_MQTT_HOST: self._mqtt_host,
                     CONF_MQTT_USERNAME: self._mqtt_username,
                     CONF_MQTT_PASSWORD: self._mqtt_password,
-                    CONF_VERIFY_SSL: self._verify_ssl,                    
+                    CONF_VERIFY_SSL: self._verify_ssl,
                     "model": self._model,
                     "instructions": user_input.get("instructions", ""),
                     CONF_CONTEXT_WINDOW: user_input[CONF_CONTEXT_WINDOW],
@@ -102,7 +103,6 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
                 return self.async_create_entry(title="MQTT N8N Agent", data=data)
 
-        # Show options form
         return self.async_show_form(
             step_id="options",
             data_schema=self._get_options_data_schema(),
@@ -114,7 +114,7 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return vol.Schema(
             {
                 vol.Required(CONF_N8N_URL): str,
-                vol.Optional(CONF_VERIFY_SSL, default=True): bool,  
+                vol.Optional(CONF_VERIFY_SSL, default=True): bool,
                 vol.Required(CONF_MQTT_HOST): str,
                 vol.Optional(CONF_MQTT_USERNAME): str,
                 vol.Optional(CONF_MQTT_PASSWORD): str,
@@ -123,11 +123,10 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _get_options_data_schema(self):
         defaults = {
-            CONF_CONTEXT_WINDOW: 5,
-            CONF_MAX_HISTORY: 10,
-            CONF_KEEP_ALIVE: 60,
-            CONF_ALLOW_THINKING: False,
-            vol.Optional(CONF_VERIFY_SSL, default=True): bool,            
+            CONF_CONTEXT_WINDOW: DEFAULT_CONTEXT_WINDOW,
+            CONF_MAX_HISTORY: DEFAULT_MAX_HISTORY,
+            CONF_KEEP_ALIVE: DEFAULT_KEEP_ALIVE,
+            CONF_ALLOW_THINKING: DEFAULT_ALLOW_THINKING,
         }
         return vol.Schema(
             {
@@ -143,27 +142,29 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-    def _fetch_model_from_n8n_blocking(self, n8n_url: str) -> str:
+    def _fetch_model_from_n8n_blocking(self, n8n_url: str, verify_ssl: bool = True) -> str:
         """Blocking method to fetch model name from N8N."""
         import requests  # safe in executor
         try:
-            resp = requests.get(f"{n8n_url.rstrip('/')}/api/tags", timeout=5)
+            resp = requests.get(
+                f"{n8n_url.rstrip('/')}/api/tags",
+                timeout=5,
+                verify=verify_ssl,
+            )
             resp.raise_for_status()
             data = resp.json()
-    
+
             models = data.get("models", [])
             if not models:
                 raise ValueError("No models found in response")
-    
-            # Pick the first model's 'model' field
+
             model = models[0].get("model")
             if not model:
                 raise ValueError("No 'model' key in first model entry")
-    
+
             return model
         except Exception as e:
             raise e
-
 
     def _test_mqtt_connection_blocking(self, host, username=None, password=None):
         """Blocking test MQTT connection using asyncio-mqtt, run in executor."""
@@ -186,7 +187,6 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry):
         """Return the options flow handler."""
-        # You can implement a separate OptionsFlow handler here if needed
         return MqttN8nAgentOptionsFlow(config_entry)
 
 
@@ -204,16 +204,14 @@ class MqttN8nAgentOptionsFlow(config_entries.OptionsFlow):
                 errors["keep_alive"] = "invalid_keep_alive"
 
             if not errors:
-                # Update options and finish
                 return self.async_create_entry(title="", data=user_input)
 
-        # Load defaults and current options/data
         current = self.config_entry.options if self.config_entry.options else self.config_entry.data
         defaults = {
-            CONF_CONTEXT_WINDOW: 5,
-            CONF_MAX_HISTORY: 10,
-            CONF_KEEP_ALIVE: 60,
-            CONF_ALLOW_THINKING: False,
+            CONF_CONTEXT_WINDOW: DEFAULT_CONTEXT_WINDOW,
+            CONF_MAX_HISTORY: DEFAULT_MAX_HISTORY,
+            CONF_KEEP_ALIVE: DEFAULT_KEEP_ALIVE,
+            CONF_ALLOW_THINKING: DEFAULT_ALLOW_THINKING,
         }
 
         data_schema = vol.Schema(
