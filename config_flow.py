@@ -1,7 +1,12 @@
+import logging
+
+import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.typing import ConfigType
+
 from .const import (
     DOMAIN,
     CONF_N8N_HOST, CONF_N8N_PORT,
@@ -13,6 +18,8 @@ from .const import (
     DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_HISTORY, DEFAULT_KEEP_ALIVE, DEFAULT_SHOW_THINKING,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for MQTT + n8n conversation agent."""
 
@@ -22,10 +29,11 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
         if user_input is None:
+            # First form: basic settings + webhooks
             schema = vol.Schema({
                 vol.Required(CONF_N8N_HOST): str,
                 vol.Optional(CONF_N8N_PORT, default=DEFAULT_N8N_PORT): int,
-                vol.Required(CONF_WEBHOOK_LIST_MODELS): str,
+                vol.Optional(CONF_WEBHOOK_LIST_MODELS, default=""): str,
                 vol.Required(CONF_WEBHOOK_CHAT): str,
                 vol.Optional(CONF_WEBHOOK_STREAM, default=""): str,
                 vol.Required(CONF_MQTT_HOST): str,
@@ -40,10 +48,58 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             })
             return self.async_show_form(step_id="user", data_schema=schema)
 
-        # Validate user_input if needed (e.g. ping n8n, check webhooks endpoints)
-        # For now, assume valid.
+        # If webhook_list_models provided, try to fetch models
+        models = None
+        if user_input.get(CONF_WEBHOOK_LIST_MODELS):
+            try:
+                url = user_input[CONF_WEBHOOK_LIST_MODELS]
+                # If host / port were given, optionally prefix them
+                async with aiohttp.ClientSession() as session:
+                    resp = await session.get(url, timeout=10)
+                    resp.raise_for_status()
+                    data = await resp.json()
+                # Expecting data like: { "models": ["model1", "model2", ...] }
+                models = data.get("models", [])
+                if not isinstance(models, list):
+                    _LOGGER.warning("webhook_list_models did not return a list under 'models'")
+                    models = None
+            except Exception as e:
+                _LOGGER.warning("Could not fetch models from webhook_list_models: %s", e)
+                models = None
 
+        if models:
+            # If successful, show a second step asking user to pick model
+            return await self.async_step_model(user_input, models)
+
+        # If no list_models or failed, fallback: free text for model in webhook_chat or other parameter
+        # We'll embed the model name into the webhook_chat payload later; for now store entry
         return self.async_create_entry(
             title=f"n8n @ {user_input[CONF_N8N_HOST]}",
             data=user_input
+        )
+
+    async def async_step_model(self, user_input, models):
+        """Ask user to pick model from list if available."""
+        # We need the previous user_input stored somewhere—could use self._data or similar
+        # For simplicity, store in flow context
+        context = self.context.setdefault("user_input", {})
+        context.update(user_input)
+
+        schema = vol.Schema({
+            vol.Required("model", default=models[0]): vol.In(models),
+        })
+        return self.async_show_form(
+            step_id="model",
+            data_schema=schema,
+            description_placeholders={"models": ", ".join(models)}
+        )
+
+    async def async_step_model_finish(self, user_input_model):
+        """Finish after model selected."""
+        # Retrieve stored previous input
+        stored = self.context.get("user_input", {})
+        stored[ "model" ] = user_input_model["model"]
+        return self.async_create_entry(
+            title=f"n8n @ {stored[CONF_N8N_HOST]} (model: {user_input_model['model']})",
+            data=stored
         )
