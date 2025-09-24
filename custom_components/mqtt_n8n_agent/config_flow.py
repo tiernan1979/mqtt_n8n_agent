@@ -3,7 +3,6 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     DOMAIN,
@@ -39,19 +38,13 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Step 1: Ask for N8N URL and MQTT connection details."""
-
         errors = {}
 
         if user_input is not None:
-            self._n8n_url = user_input[CONF_N8N_URL]
-            self._mqtt_host = user_input[CONF_MQTT_HOST]
-            self._mqtt_username = user_input.get(CONF_MQTT_USERNAME)
-            self._mqtt_password = user_input.get(CONF_MQTT_PASSWORD)
-
-            # Run both checks in executor to avoid blocking
+            # Validate N8N URL and MQTT broker by testing connection
             try:
                 model = await self.hass.async_add_executor_job(
-                    self._fetch_model_from_n8n_blocking, self._n8n_url
+                    self._fetch_model_from_n8n_blocking, user_input[CONF_N8N_URL]
                 )
             except Exception as err:
                 _LOGGER.error("Failed to fetch model from N8N: %s", err)
@@ -65,9 +58,9 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 await self.hass.async_add_executor_job(
                     self._test_mqtt_connection_blocking,
-                    self._mqtt_host,
-                    self._mqtt_username,
-                    self._mqtt_password,
+                    user_input[CONF_MQTT_HOST],
+                    user_input.get(CONF_MQTT_USERNAME),
+                    user_input.get(CONF_MQTT_PASSWORD),
                 )
             except Exception as err:
                 _LOGGER.error("Failed to connect to MQTT broker: %s", err)
@@ -78,17 +71,27 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors=errors,
                 )
 
+            # Store the validated info for the next step
+            self._n8n_url = user_input[CONF_N8N_URL]
+            self._mqtt_host = user_input[CONF_MQTT_HOST]
+            self._mqtt_username = user_input.get(CONF_MQTT_USERNAME)
+            self._mqtt_password = user_input.get(CONF_MQTT_PASSWORD)
             self._model = model
 
-            return await self.async_step_options()
+            # Show the next form for options
+            return self.async_show_form(
+                step_id="options",
+                data_schema=self._get_options_data_schema(),
+            )
 
+        # First show initial form
         return self.async_show_form(
-            step_id="user", data_schema=self._get_user_data_schema()
+            step_id="user",
+            data_schema=self._get_user_data_schema(),
         )
 
     async def async_step_options(self, user_input=None):
         """Step 2: Configure agent options."""
-
         errors = {}
 
         if user_input is not None:
@@ -96,6 +99,7 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["keep_alive"] = "invalid_keep_alive"
 
             if not errors:
+                # Create the config entry with all data
                 data = {
                     CONF_N8N_URL: self._n8n_url,
                     CONF_MQTT_HOST: self._mqtt_host,
@@ -110,27 +114,10 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
                 return self.async_create_entry(title="MQTT N8N Agent", data=data)
 
-        defaults = {
-            CONF_CONTEXT_WINDOW: DEFAULT_CONTEXT_WINDOW,
-            CONF_MAX_HISTORY: DEFAULT_MAX_HISTORY,
-            CONF_KEEP_ALIVE: DEFAULT_KEEP_ALIVE,
-            CONF_ALLOW_THINKING: DEFAULT_ALLOW_THINKING,
-        }
-
-        data_schema = vol.Schema(
-            {
-                vol.Required("model", default=self._model): str,
-                vol.Required("instructions", default="You are a voice assistant for Home Assistant."): str,
-                vol.Required(CONF_CONTEXT_WINDOW, default=defaults[CONF_CONTEXT_WINDOW]): int,
-                vol.Required(CONF_MAX_HISTORY, default=defaults[CONF_MAX_HISTORY]): int,
-                vol.Required(CONF_KEEP_ALIVE, default=defaults[CONF_KEEP_ALIVE]): int,
-                vol.Required(CONF_ALLOW_THINKING, default=defaults[CONF_ALLOW_THINKING]): bool,
-            }
-        )
-
+        # Show options form
         return self.async_show_form(
             step_id="options",
-            data_schema=data_schema,
+            data_schema=self._get_options_data_schema(),
             errors=errors,
             description_placeholders={"model": self._model or "unknown"},
         )
@@ -145,11 +132,33 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
+    def _get_options_data_schema(self):
+        defaults = {
+            CONF_CONTEXT_WINDOW: 5,
+            CONF_MAX_HISTORY: 10,
+            CONF_KEEP_ALIVE: 60,
+            CONF_ALLOW_THINKING: False,
+        }
+        return vol.Schema(
+            {
+                vol.Required("model", default=self._model): str,
+                vol.Required(
+                    "instructions",
+                    default="You are a voice assistant for Home Assistant.",
+                ): str,
+                vol.Required(CONF_CONTEXT_WINDOW, default=defaults[CONF_CONTEXT_WINDOW]): int,
+                vol.Required(CONF_MAX_HISTORY, default=defaults[CONF_MAX_HISTORY]): int,
+                vol.Required(CONF_KEEP_ALIVE, default=defaults[CONF_KEEP_ALIVE]): int,
+                vol.Required(CONF_ALLOW_THINKING, default=defaults[CONF_ALLOW_THINKING]): bool,
+            }
+        )
+
     def _fetch_model_from_n8n_blocking(self, n8n_url: str) -> str:
         """Blocking method to fetch model name from N8N."""
         import requests  # safe in executor
+
         try:
-            resp = requests.get(f"{n8n_url.rstrip('/')}/api/model", timeout=5)
+            resp = requests.get(f"{n8n_url.rstrip('/')}/api/tags", timeout=5)
             resp.raise_for_status()
             data = resp.json()
             model = data.get("model")
@@ -163,7 +172,6 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Blocking test MQTT connection using asyncio-mqtt, run in executor."""
         import asyncio
         from asyncio_mqtt import Client as MQTTClient
-        import asyncio_mqtt
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -180,4 +188,60 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
+        """Return the options flow handler."""
+        # You can implement a separate OptionsFlow handler here if needed
         return MqttN8nAgentOptionsFlow(config_entry)
+
+
+class MqttN8nAgentOptionsFlow(config_entries.OptionsFlow):
+    """Handle options flow for MQTT N8N Agent."""
+
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            if user_input[CONF_KEEP_ALIVE] <= 0:
+                errors["keep_alive"] = "invalid_keep_alive"
+
+            if not errors:
+                # Update options and finish
+                return self.async_create_entry(title="", data=user_input)
+
+        # Load defaults and current options/data
+        current = self.config_entry.options if self.config_entry.options else self.config_entry.data
+        defaults = {
+            CONF_CONTEXT_WINDOW: 5,
+            CONF_MAX_HISTORY: 10,
+            CONF_KEEP_ALIVE: 60,
+            CONF_ALLOW_THINKING: False,
+        }
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(
+                    "instructions",
+                    default=current.get("instructions", "You are a voice assistant for Home Assistant."),
+                ): str,
+                vol.Required(
+                    CONF_CONTEXT_WINDOW,
+                    default=current.get(CONF_CONTEXT_WINDOW, defaults[CONF_CONTEXT_WINDOW]),
+                ): int,
+                vol.Required(
+                    CONF_MAX_HISTORY,
+                    default=current.get(CONF_MAX_HISTORY, defaults[CONF_MAX_HISTORY]),
+                ): int,
+                vol.Required(
+                    CONF_KEEP_ALIVE,
+                    default=current.get(CONF_KEEP_ALIVE, defaults[CONF_KEEP_ALIVE]),
+                ): int,
+                vol.Required(
+                    CONF_ALLOW_THINKING,
+                    default=current.get(CONF_ALLOW_THINKING, defaults[CONF_ALLOW_THINKING]),
+                ): bool,
+            }
+        )
+
+        return self.async_show_form(step_id="init", data_schema=data_schema, errors=errors)
