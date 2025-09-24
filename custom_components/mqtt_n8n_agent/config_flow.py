@@ -114,6 +114,7 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return vol.Schema(
             {
                 vol.Required(CONF_N8N_URL): str,
+                vol.Optional(CONF_VERIFY_SSL, default=True): bool,  
                 vol.Required(CONF_MQTT_HOST): str,
                 vol.Optional(CONF_MQTT_USERNAME): str,
                 vol.Optional(CONF_MQTT_PASSWORD): str,
