@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "requirements": [
     "paho-mqtt>=1.6.1",
-    "requests>=2.26.0"
+    "requests>=2.26.0",
   ],
   "dependencies": [],
   "codeowners": ["@tiernan1979"],
