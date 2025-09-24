@@ -8,6 +8,7 @@ from .const import (
     CONF_MAX_HISTORY,
     CONF_KEEP_ALIVE,
     CONF_SHOW_THINKING,
+    CONF_N8N_HOST,
 )
 
 _LOGGER = logging.getLogger(__name__)
