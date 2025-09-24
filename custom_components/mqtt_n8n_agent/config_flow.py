@@ -1,9 +1,10 @@
 import logging
 import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from aiohttp import ClientSession, ClientConnectorError
+
 from .const import (
     DOMAIN,
     CONF_N8N_URL,
@@ -22,6 +23,7 @@ DEFAULT_CONTEXT_WINDOW = 5
 DEFAULT_MAX_HISTORY = 10
 DEFAULT_KEEP_ALIVE = 60
 DEFAULT_ALLOW_THINKING = False
+
 
 class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for MQTT N8N Agent."""
@@ -46,10 +48,11 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._mqtt_username = user_input.get(CONF_MQTT_USERNAME)
             self._mqtt_password = user_input.get(CONF_MQTT_PASSWORD)
 
-            # Test N8N URL to fetch model
-            session = async_get_clientsession(self.hass)
+            # Run both checks in executor to avoid blocking
             try:
-                model = await self._fetch_model_from_n8n(session, self._n8n_url)
+                model = await self.hass.async_add_executor_job(
+                    self._fetch_model_from_n8n_blocking, self._n8n_url
+                )
             except Exception as err:
                 _LOGGER.error("Failed to fetch model from N8N: %s", err)
                 errors["base"] = "n8n_connection_failed"
@@ -59,10 +62,12 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors=errors,
                 )
 
-            # Test MQTT connection
             try:
-                await self._test_mqtt_connection(
-                    self._mqtt_host, self._mqtt_username, self._mqtt_password
+                await self.hass.async_add_executor_job(
+                    self._test_mqtt_connection_blocking,
+                    self._mqtt_host,
+                    self._mqtt_username,
+                    self._mqtt_password,
                 )
             except Exception as err:
                 _LOGGER.error("Failed to connect to MQTT broker: %s", err)
@@ -73,7 +78,6 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors=errors,
                 )
 
-            # Save model for next step
             self._model = model
 
             return await self.async_step_options()
@@ -88,7 +92,6 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            # Validate keep_alive is positive integer
             if user_input[CONF_KEEP_ALIVE] <= 0:
                 errors["keep_alive"] = "invalid_keep_alive"
 
@@ -107,7 +110,6 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
                 return self.async_create_entry(title="MQTT N8N Agent", data=data)
 
-        # Show form with defaults
         defaults = {
             CONF_CONTEXT_WINDOW: DEFAULT_CONTEXT_WINDOW,
             CONF_MAX_HISTORY: DEFAULT_MAX_HISTORY,
@@ -118,7 +120,7 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema(
             {
                 vol.Required("model", default=self._model): str,
-                vol.Required("instructions", default="You are a voice assistant for Home Assistant.Answer questions about the world truthfully.Answer in plain text. Keep it simple and to the point."): str,
+                vol.Required("instructions", default="You are a voice assistant for Home Assistant."): str,
                 vol.Required(CONF_CONTEXT_WINDOW, default=defaults[CONF_CONTEXT_WINDOW]): int,
                 vol.Required(CONF_MAX_HISTORY, default=defaults[CONF_MAX_HISTORY]): int,
                 vol.Required(CONF_KEEP_ALIVE, default=defaults[CONF_KEEP_ALIVE]): int,
@@ -143,77 +145,39 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-    async def _fetch_model_from_n8n(self, session: ClientSession, n8n_url: str) -> str:
-        """Fetch the model name from the N8N API."""
-        # Example API call - adjust as per your actual N8N API for model fetching
-        api_endpoint = f"{n8n_url.rstrip('/')}/api/model"
-        async with session.get(api_endpoint) as resp:
-            if resp.status != 200:
-                raise Exception(f"N8N API returned status {resp.status}")
-            data = await resp.json()
-            # Assuming the model info is in data['model']
+    def _fetch_model_from_n8n_blocking(self, n8n_url: str) -> str:
+        """Blocking method to fetch model name from N8N."""
+        import requests  # safe in executor
+        try:
+            resp = requests.get(f"{n8n_url.rstrip('/')}/api/model", timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
             model = data.get("model")
             if not model:
-                raise Exception("Model not found in N8N API response")
+                raise ValueError("No model found in response")
             return model
+        except Exception as e:
+            raise e
 
-    async def _test_mqtt_connection(
-        self, host: str, username: str = None, password: str = None
-    ):
-        """Test MQTT connection with given credentials."""
-        # Use aiomqtt or asyncio-mqtt client
-        try:
-            from asyncio_mqtt import Client as MQTTClient
-            
-            async with MQTTClient(
-                hostname=host,
-                username=username,
-                password=password,
-                # remove tls param as per error you got
-            ) as client:
-                # Simple connection test: connect and disconnect immediately
+    def _test_mqtt_connection_blocking(self, host, username=None, password=None):
+        """Blocking test MQTT connection using asyncio-mqtt, run in executor."""
+        import asyncio
+        from asyncio_mqtt import Client as MQTTClient
+        import asyncio_mqtt
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def connect_test():
+            async with MQTTClient(hostname=host, username=username, password=password):
                 pass
-        except Exception as err:
-            raise err
+
+        try:
+            loop.run_until_complete(connect_test())
+        finally:
+            loop.close()
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
         return MqttN8nAgentOptionsFlow(config_entry)
-
-
-class MqttN8nAgentOptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow for MQTT N8N Agent."""
-
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
-
-    async def async_step_init(self, user_input=None):
-        errors = {}
-
-        if user_input is not None:
-            if user_input.get(CONF_KEEP_ALIVE, 0) <= 0:
-                errors["keep_alive"] = "invalid_keep_alive"
-
-            if not errors:
-                return self.async_create_entry(title="", data=user_input)
-
-        current = self.config_entry.data
-        defaults = {
-            CONF_CONTEXT_WINDOW: current.get(CONF_CONTEXT_WINDOW, DEFAULT_CONTEXT_WINDOW),
-            CONF_MAX_HISTORY: current.get(CONF_MAX_HISTORY, DEFAULT_MAX_HISTORY),
-            CONF_KEEP_ALIVE: current.get(CONF_KEEP_ALIVE, DEFAULT_KEEP_ALIVE),
-            CONF_ALLOW_THINKING: current.get(CONF_ALLOW_THINKING, DEFAULT_ALLOW_THINKING),
-        }
-
-        data_schema = vol.Schema(
-            {
-                vol.Optional("instructions", default=current.get("instructions", "")): str,
-                vol.Required(CONF_CONTEXT_WINDOW, default=defaults[CONF_CONTEXT_WINDOW]): int,
-                vol.Required(CONF_MAX_HISTORY, default=defaults[CONF_MAX_HISTORY]): int,
-                vol.Required(CONF_KEEP_ALIVE, default=defaults[CONF_KEEP_ALIVE]): int,
-                vol.Required(CONF_ALLOW_THINKING, default=defaults[CONF_ALLOW_THINKING]): bool,
-            }
-        )
-
-        return self.async_show_form(step_id="init", data_schema=data_schema, errors=errors)
