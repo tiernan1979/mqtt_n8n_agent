@@ -8,6 +8,7 @@
     "aiohttp"
   ],
   "dependencies": [],
+  "config_flow": true,
   "codeowners": ["tiernan1979"],
   "iot_class": "local_polling"
 }
