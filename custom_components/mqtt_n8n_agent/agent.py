@@ -5,7 +5,6 @@ from typing import Optional
 
 from homeassistant import core
 from homeassistant.components import conversation
-from homeassistant.components.conversation import BotResponse, ConversationRequest
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.typing import HomeAssistantType
 
@@ -94,67 +93,76 @@ class MqttN8nAgent(conversation.ConversationAgent):
 
         self.conversation_histories: dict[str, list[str]] = {}
 
-    async def async_process(self, request: ConversationRequest) -> BotResponse:
-        if MQTTClient is None:
-            _LOGGER.error("asyncio_mqtt library not installed")
-            return BotResponse(text="Sorry, I cannot respond right now.", data={})
+async def async_process(self, request: conversation.ConversationInput) -> ConversationResult:
+    if MQTTClient is None:
+        _LOGGER.error("asyncio_mqtt library not installed")
+        return ConversationResult(
+            response=TextSpeech(type=SpeechType.PLAIN, speech="Sorry, I cannot respond right now."),
+            conversation_id=request.conversation_id,
+        )
 
-        conversation_id = request.conversation_id
-        user_text = request.text
+    conversation_id = request.conversation_id
+    user_text = request.text
 
-        history = self.conversation_histories.get(conversation_id, [])
-        history.append(user_text)
-        if len(history) > self.max_history:
-            history = history[-self.max_history :]
-        self.conversation_histories[conversation_id] = history
+    history = self.conversation_histories.get(conversation_id, [])
+    history.append(user_text)
+    if len(history) > self.max_history:
+        history = history[-self.max_history:]
+    self.conversation_histories[conversation_id] = history
 
-        input_topic = f"n8n/voice/input/{conversation_id}"
-        output_topic = f"n8n/voice/output/{conversation_id}"
+    input_topic = f"n8n/voice/input/{conversation_id}"
+    output_topic = f"n8n/voice/output/{conversation_id}"
 
-        payload = {
-            "text": user_text,
-            "conversation_id": conversation_id,
-            "history": history,
-            "context_window": self.context_window,
-        }
-        if self.model:
-            payload["model"] = self.model
+    payload = {
+        "text": user_text,
+        "conversation_id": conversation_id,
+        "history": history,
+        "context_window": self.context_window,
+    }
+    if self.model:
+        payload["model"] = self.model
 
-        full_response = ""
-        queue: asyncio.Queue[str] = asyncio.Queue()
+    full_response = ""
+    queue: asyncio.Queue[str] = asyncio.Queue()
 
-        async def mqtt_message_handler(msg):
-            try:
-                tok = msg.payload.decode()
-            except Exception:
-                return
-            await queue.put(tok)
-
+    async def mqtt_message_handler(msg):
         try:
-            async with MQTTClient(
-                hostname=self.mqtt_host,
-                port=self.mqtt_port,
-                username=self.mqtt_username,
-                password=self.mqtt_password,
-                tls_context=None if not self.mqtt_tls else True,
-            ) as client:
-                await client.subscribe(output_topic)
-                client.on_message = mqtt_message_handler
+            tok = msg.payload.decode()
+        except Exception:
+            return
+        await queue.put(tok)
 
-                await client.publish(input_topic, json.dumps(payload))
+    try:
+        async with MQTTClient(
+            hostname=self.mqtt_host,
+            port=self.mqtt_port,
+            username=self.mqtt_username,
+            password=self.mqtt_password,
+            tls_context=None if not self.mqtt_tls else True,
+        ) as client:
+            await client.subscribe(output_topic)
+            client.on_message = mqtt_message_handler
 
-                try:
-                    while True:
-                        token = await asyncio.wait_for(queue.get(), timeout=self.keep_alive)
-                        if token == "[END]":
-                            break
-                        full_response += token
-                except asyncio.TimeoutError:
-                    _LOGGER.warning("Timeout waiting for response from n8n for conv %s", conversation_id)
+            await client.publish(input_topic, json.dumps(payload))
 
-                await client.unsubscribe(output_topic)
-        except MqttError as e:
-            _LOGGER.error("MQTT error: %s", e)
-            return BotResponse(text="Error communicating with assistant.", data={})
+            try:
+                while True:
+                    token = await asyncio.wait_for(queue.get(), timeout=self.keep_alive)
+                    if token == "[END]":
+                        break
+                    full_response += token
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Timeout waiting for response from n8n for conv %s", conversation_id)
 
-        return BotResponse(text=full_response, data={})
+            await client.unsubscribe(output_topic)
+    except MqttError as e:
+        _LOGGER.error("MQTT error: %s", e)
+        return ConversationResult(
+            response=TextSpeech(type=SpeechType.PLAIN, speech="Error communicating with assistant."),
+            conversation_id=request.conversation_id,
+        )
+
+    return ConversationResult(
+        response=TextSpeech(type=SpeechType.PLAIN, speech=full_response),
+        conversation_id=request.conversation_id,
+    )
