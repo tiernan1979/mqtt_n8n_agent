@@ -1,6 +1,6 @@
 DOMAIN = "mqtt_n8n_agent"
 
-CONF_N8N_HOST = "n8n_host"
+CONF_N8N_URL = "n8n_url"
 CONF_N8N_PORT = "n8n_port"
 CONF_WEBHOOK_LIST_MODELS = "webhook_list_models"
 CONF_WEBHOOK_CHAT = "webhook_chat"
