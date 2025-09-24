@@ -21,7 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     mqtt_port = entry.data.get("mqtt_port", 1883)
     mqtt_user = entry.data.get("mqtt_username")
     mqtt_pass = entry.data.get("mqtt_password")
-    mqtt_tls = entry.data.get("mqtt_tls", False)
+    verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
 
     # Connect to MQTT broker using aiomqtt
     client = MQTTClient(
@@ -29,7 +29,6 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         port=mqtt_port,
         username=mqtt_user or None,
         password=mqtt_pass or None,
-        tls=mqtt_tls,
     )
 
     try:
