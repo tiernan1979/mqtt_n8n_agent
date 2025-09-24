@@ -119,7 +119,7 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema(
             {
                 vol.Required("model", default=self._model): str,
-                vol.Optional("instructions", default=""): str,
+                vol.Required("instructions", default="You are a voice assistant for Home Assistant.Answer questions about the world truthfully.Answer in plain text. Keep it simple and to the point."): str,
                 vol.Required(CONF_CONTEXT_WINDOW, default=defaults[CONF_CONTEXT_WINDOW]): int,
                 vol.Required(CONF_MAX_HISTORY, default=defaults[CONF_MAX_HISTORY]): int,
                 vol.Required(CONF_KEEP_ALIVE, default=defaults[CONF_KEEP_ALIVE]): int,
