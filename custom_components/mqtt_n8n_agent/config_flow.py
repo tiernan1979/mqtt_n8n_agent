@@ -4,7 +4,6 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from aiohttp import ClientSession, ClientConnectorError
-from asyncio_mqtt import Client as MQTTClient  # assuming aiomqtt, adapt if different
 from .const import (
     DOMAIN,
     CONF_N8N_URL,
@@ -164,6 +163,8 @@ class MqttN8nAgentConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Test MQTT connection with given credentials."""
         # Use aiomqtt or asyncio-mqtt client
         try:
+            from asyncio_mqtt import Client as MQTTClient
+            
             async with MQTTClient(
                 hostname=host,
                 username=username,
